@@ -18,8 +18,8 @@ jobs:
       - name: Download Reliable AOSP Clang Toolchain
         run: |
           mkdir -p $GITHUB_WORKSPACE/tc/clang
-          # Fetching a verified, stable prebuilt standalone AOSP Clang 14 tarball directly
-          curl -Lo clang.tar.gz https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r450784d.tar.gz
+          # Pulling the raw binary archive directly from the Android prebuilts mirror
+          curl -Lo clang.tar.gz https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r0.12/clang-r488909.tar.gz
           tar -C $GITHUB_WORKSPACE/tc/clang -xzf clang.tar.gz
           rm clang.tar.gz
 
