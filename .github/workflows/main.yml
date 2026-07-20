@@ -24,15 +24,15 @@ jobs:
           kernel-url: .
           config: exynos9820_defconfig
           arch: arm64
-          # Disable the direct AOSP downloader to stop the 400 error
-          aosp-clang: false
           
-          # Use a dedicated custom Clang compiler URL instead
-          other-clang-url: https://github.com/kdrag0n/proton-clang/archive/refs/heads/master.zip
-          other-clang-branch: master
+          # Switch back to robust, cached native AOSP Clang
+          aosp-clang: true
+          aosp-clang-version: r383902
           
+          # Match it with legacy AOSP GCC to satisfy compilation dependencies
           aosp-gcc: true
-          extra-make-args: LLVM=1 LLVM_IAS=1 LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+          
+          # Drop the modern LLVM flags since r383902 uses standard cross-compile arguments internally
           ksu: false
 
       - name: Process and Separate Partition Images
