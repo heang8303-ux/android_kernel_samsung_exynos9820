@@ -17,26 +17,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libelf-dev
           
-      - name: Build Android Kernel
+       - name: Build Android Kernel
         uses: dabao1955/kernel_build_action@v1.10.2
         with:
-          # Tells the builder action that source code resides in the current working directory
           kernel-url: .
-          
-          # The unified target config for Samsung Exynos 9820 platform devices
           config: exynos9820_defconfig
           arch: arm64
           
-          # Force use AOSP Clang toolchain as required by LineageOS build parameters
+          # Force use AOSP Clang
           aosp-clang: true
+          # The correct property name for this action to select Clang 14
+          aosp-clang-version: r450784d
           
-          # Target standard Clang 14 tracking binary (r450784d) for contemporary Lineage trees
-          clang-version: r450784d
+          # Toggle this to true to satisfy the action's validation rule
+          aosp-gcc: true
           
-          # Passes direct LLVM instructions to substitute standard GNU binutils
-          extra-cmd: LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+          # The correct property name to pass LLVM flags to the Makefile
+          extra-make-args: LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
           
-          # Explicitly disable integrated root injection for a pure stock compile phase
           ksu: false
 
       - name: Process Raw Image Binary
