@@ -1,0 +1,59 @@
+name: Build S10 5G Kernel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Source
+      uses: actions/checkout@v4
+      with:
+        ref: lineage-23.2
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc bison build-essential ccache flex libelf-dev libssl-dev libncurses-dev git zip
+
+    - name: Download Clang Toolchain
+      run: |
+        mkdir clang
+        cd clang
+        wget https://googlesource.com
+        tar -xf clang-r487747c.tar.gz
+        echo "$(pwd)/bin" >> $GITHUB_PATH
+
+    - name: Build Kernel Binary
+      run: |
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        export CC=clang
+        
+        make exynos9820_defconfig 
+        make -j$(nproc)
+
+    - name: Package with AnyKernel3
+      run: |
+        # 1. Clone the template flasher tool
+        git clone https://github.com AnyKernel
+        cd AnyKernel
+        
+        # 2. Configure it for the Galaxy S10 5G (beyondx)
+        sed -i 's/device.name1=/device.name1=beyondx/g' anykernel.sh
+        sed -i 's/device.name2=/device.name2=beyond3lte/g' anykernel.sh
+        
+        # 3. Copy your fresh overclocked kernel inside
+        cp ../arch/arm64/boot/Image.gz-dtb .
+        
+        # 4. Zip everything up securely
+        zip -r9 ../S10_5G_754MHz_GPU_Kernel.zip * -x .git* README.md
+
+    - name: Upload Flashable Zip
+      uses: actions/upload-artifact@v4
+      with:
+        name: S10_5G_Flashable_Kernel
+        path: S10_5G_754MHz_GPU_Kernel.zip
+        
