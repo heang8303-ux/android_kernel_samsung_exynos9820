@@ -1,60 +1,63 @@
-name: Build S10 5G Kernel
+name: Build LineageOS S10 5G Kernel
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Allows you to manually click "Run workflow" in GitHub
 
 jobs:
-  build:
+  build-kernel:
+    name: Compiling LineageOS Exynos 9820
     runs-on: ubuntu-latest
+
     steps:
-    - name: Checkout Source
-      uses: actions/checkout@v4
-      with:
-        ref: lineage-23.2
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
 
-    - name: Install Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y bc bison build-essential ccache flex libelf-dev libssl-dev libncurses-dev git zip
+      - name: Setup Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libsdl1.1-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libelf-dev
 
-    - name: Download Clang Toolchain
-      run: |
-        mkdir clang
-        cd clang
-        wget https://googlesource.com
-        tar -xf clang-r487747c.tar.gz
-        echo "$(pwd)/bin" >> $GITHUB_PATH
+      - name: Build Android Kernel
+        uses: dabao1955/kernel_build_action@v1.10.2
+        with:
+          # Tells the builder action that source code resides in the current working directory
+          kernel-url: .
+          
+          # The unified target config for Samsung Exynos 9820 platform devices
+          config: exynos9820_defconfig
+          arch: arm64
+          
+          # Force use AOSP Clang toolchain as required by LineageOS build parameters
+          aosp-clang: true
+          
+          # Target standard Clang 14 tracking binary (r450784d) for contemporary Lineage trees
+          clang-version: r450784d
+          
+          # Passes direct LLVM instructions to substitute standard GNU binutils
+          extra-cmd: LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+          
+          # Explicitly disable integrated root injection for a pure stock compile phase
+          ksu: false
 
-    - name: Build Kernel Binary
-      run: |
-        export ARCH=arm64
-        export SUBARCH=arm64
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        export CC=clang
-        
-        make exynos9820_defconfig 
-        make -j$(nproc)
+      - name: Process Raw Image Binary
+        run: |
+          # Locate the newly compiled binary inside the working directory workspace 
+          # and copy it outwards as a standardized flashable partition image
+          if [ -f AnyKernel3/Image.gz-dtb ]; then
+            cp AnyKernel3/Image.gz-dtb S10_5G_Kernel.img
+            echo "SUCCESS: Found Image.gz-dtb and created standalone .img"
+          elif [ -f AnyKernel3/Image ]; then
+            cp AnyKernel3/Image S10_5G_Kernel.img
+            echo "SUCCESS: Found uncompressed Image and created standalone .img"
+          else
+            echo "WARNING: Kernel binary location anomalous. Check logs."
+          fi
 
-    - name: Package with AnyKernel3
-      run: |
-        # 1. Clone the template flasher tool
-        git clone https://github.com AnyKernel
-        cd AnyKernel
-        
-        # 2. Configure it for the Galaxy S10 5G (beyondx)
-        sed -i 's/device.name1=/device.name1=beyondx/g' anykernel.sh
-        sed -i 's/device.name2=/device.name2=beyond3lte/g' anykernel.sh
-        
-        # 3. Copy your fresh overclocked kernel inside
-        cp ../arch/arm64/boot/Image.gz-dtb .
-        
-        # 4. Zip everything up securely
-        zip -r9 ../S10_5G_754MHz_GPU_Kernel.zip * -x .git* README.md
-
-    - name: Upload Flashable Zip
-      uses: actions/upload-artifact@v4
-      with:
-        name: S10_5G_Flashable_Kernel
-        path: S10_5G_754MHz_GPU_Kernel.zip
-
-        
+      - name: Upload Flashable Zip and Standalone Image Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: S10-5G-Kernel-Outputs
+          path: |
+            AnyKernel3/*.zip
+            S10_5G_Kernel.img
+            
