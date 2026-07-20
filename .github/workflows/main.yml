@@ -15,9 +15,8 @@ jobs:
       - name: Setup Build Environment
         run: |
           sudo apt-get update
+          # Removed the problematic android-sdk package completely
           sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libelf-dev
-          # Install Android Image unpacking utilities (magiskboot/mkbootimg dependencies)
-          sudo apt-get install -y android-sdk-libparseandroidboot-java
 
       - name: Build Android Kernel
         uses: dabao1955/kernel_build_action@v1.10.2
@@ -58,10 +57,11 @@ jobs:
           # 4. Create custom boot.img (Only triggers if you uploaded 'stock_boot.img' to your repo root)
           if [ -f stock_boot.img ]; then
             echo "Found stock_boot.img. Unpacking and re-injecting new kernel..."
-            # Clone AIK (Android Image Kitchen) to manually split/repack images
-            git clone https://github.com/osm0sis/Android-Image-Kitchen.git aik
+            # Using a Linux-optimized mirror containing full script utilities and binaries
+            git clone https://github.com/SebaUbuntu/AIK-Linux-mirror.git aik
             cp stock_boot.img aik/
             cd aik
+            chmod +x *.sh bin/*
             ./unpackimg.sh stock_boot.img
             # Replace the old kernel with your freshly compiled one
             cp ../out_images/kernel.img split_img/boot.img-zImage
