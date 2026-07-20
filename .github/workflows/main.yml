@@ -13,8 +13,9 @@ jobs:
       - name: Setup Build Environment
         run: |
           sudo apt-get update
-          # Install standard build tools + the required cross-compilers directly from Ubuntu
-          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libelf-dev gcc-aarch64-linux-gnu g++-aarch64-linux-gnu clang lld llvm
+          # Removed gcc-multilib, g++-multilib, and full gcc-aarch64 cross compilers to clear conflicts
+          # Added clean standalone aarch64 binutils alongside LLVM toolchain
+          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf liblz4-tool libncurses5-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libelf-dev binutils-aarch64-linux-gnu clang lld llvm
 
       - name: Compile Exynos 9820 Kernel Tree
         run: |
@@ -25,7 +26,7 @@ jobs:
           # Initialize configuration using target defconfig
           make O=out exynos9820_defconfig
           
-          # Compile using the runner's native LLVM/Clang toolchain
+          # Force the build system to use pure LLVM tools for compiling, linking, and processing
           make -j$(nproc --all) O=out \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
