@@ -1,7 +1,7 @@
-name: Build LineageOS S10 5G Kernel
+name: Build LineageOS S10 5G Full Images
 
 on:
-  workflow_dispatch: # Allows you to manually click "Run workflow" in GitHub
+  workflow_dispatch:
 
 jobs:
   build-kernel:
@@ -16,46 +16,67 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libelf-dev
-          
-       - name: Build Android Kernel
+          # Install Android Image unpacking utilities (magiskboot/mkbootimg dependencies)
+          sudo apt-get install -y android-sdk-libparseandroidboot-java
+
+      - name: Build Android Kernel
         uses: dabao1955/kernel_build_action@v1.10.2
         with:
           kernel-url: .
           config: exynos9820_defconfig
           arch: arm64
-          
-          # Force use AOSP Clang
           aosp-clang: true
-          # The correct property name for this action to select Clang 14
           aosp-clang-version: r450784d
-          
-          # Toggle this to true to satisfy the action's validation rule
           aosp-gcc: true
-          
-          # The correct property name to pass LLVM flags to the Makefile
           extra-make-args: LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
-          
           ksu: false
 
-      - name: Process Raw Image Binary
+      - name: Process and Separate Partition Images
         run: |
-          # Locate the newly compiled binary inside the working directory workspace 
-          # and copy it outwards as a standardized flashable partition image
+          mkdir -p out_images
+          
+          # 1. Grab the raw kernel binary (.img)
           if [ -f AnyKernel3/Image.gz-dtb ]; then
-            cp AnyKernel3/Image.gz-dtb S10_5G_Kernel.img
-            echo "SUCCESS: Found Image.gz-dtb and created standalone .img"
+            cp AnyKernel3/Image.gz-dtb out_images/kernel.img
           elif [ -f AnyKernel3/Image ]; then
-            cp AnyKernel3/Image S10_5G_Kernel.img
-            echo "SUCCESS: Found uncompressed Image and created standalone .img"
-          else
-            echo "WARNING: Kernel binary location anomalous. Check logs."
+            cp AnyKernel3/Image out_images/kernel.img
           fi
 
-      - name: Upload Flashable Zip and Standalone Image Artifacts
+          # 2. Extract compiled standalone DTB files if generated separately by the compiler
+          if [ -d arch/arm64/boot/dts/exynos ]; then
+            find arch/arm64/boot/dts/exynos/ -name "*.dtb" -exec cp {} out_images/ \;
+            echo "SUCCESS: Isolated separate hardware DTB files."
+          fi
+
+          # 3. Pull DTBO images out of the build directory workspace
+          if [ -f out/arch/arm64/boot/dtbo.img ]; then
+            cp out/arch/arm64/boot/dtbo.img out_images/dtbo.img
+          elif [ -f AnyKernel3/dtbo.img ]; then
+            cp AnyKernel3/dtbo.img out_images/dtbo.img
+          fi
+
+          # 4. Create custom boot.img (Only triggers if you uploaded 'stock_boot.img' to your repo root)
+          if [ -f stock_boot.img ]; then
+            echo "Found stock_boot.img. Unpacking and re-injecting new kernel..."
+            # Clone AIK (Android Image Kitchen) to manually split/repack images
+            git clone https://github.com/osm0sis/Android-Image-Kitchen.git aik
+            cp stock_boot.img aik/
+            cd aik
+            ./unpackimg.sh stock_boot.img
+            # Replace the old kernel with your freshly compiled one
+            cp ../out_images/kernel.img split_img/boot.img-zImage
+            ./repackimg.sh
+            cp image-new.img ../out_images/custom_boot.img
+            cd ..
+          else
+            echo "Notice: stock_boot.img missing from repository root. Skipping boot.img creation."
+          fi
+
+      - name: Upload All Formats Bundle
         uses: actions/upload-artifact@v4
         with:
-          name: S10-5G-Kernel-Outputs
+          name: S10-5G-Complete-Partition-Files
           path: |
             AnyKernel3/*.zip
-            S10_5G_Kernel.img
+            out_images/*
             
