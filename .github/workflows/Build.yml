@@ -1,0 +1,70 @@
+name: Build LineageOS S10 5G Manual
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+
+      - name: Setup Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf liblz4-tool libncurses5-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libelf-dev binutils-aarch64-linux-gnu clang lld llvm
+
+      - name: Compile Exynos 9820 Kernel Tree
+        run: |
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export HEADER_ARCH=arm64
+          
+          # Initializing the exact target config file we found
+          make O=out exynos9820-beyondx_defconfig
+          
+          # Fire off the compilation process
+          make -j$(nproc --all) O=out \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            LD=ld.lld \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip
+
+      - name: Package Output Formats
+        run: |
+          mkdir -p out_images
+          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+            cp out/arch/arm64/boot/Image.gz-dtb out_images/S10_5G_Kernel.img
+            echo "Successfully isolated Image.gz-dtb"
+          elif [ -f out/arch/arm64/boot/Image ]; then
+            cp out/arch/arm64/boot/Image out_images/S10_5G_Kernel.img
+            echo "Successfully isolated raw Image"
+          fi
+          
+          if [ -f out/arch/arm64/boot/dtbo.img ]; then
+            cp out/arch/arm64/boot/dtbo.img out_images/dtbo.img
+          fi
+
+      - name: Setup and Build Flashable AnyKernel3 Zip
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3.git ak3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' ak3/anykernel.sh
+          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=\/dev\/block\/by-name\/boot;/g' ak3/anykernel.sh
+          
+          if [ -f out_images/S10_5G_Kernel.img ]; then
+            cp out_images/S10_5G_Kernel.img ak3/Image.gz-dtb || cp out_images/S10_5G_Kernel.img ak3/Image
+          fi
+          
+          cd ak3 && zip -r9 ../out_images/AnyKernel3_S10_5G.zip * -x .git\* README.md && cd ..
+
+      - name: Upload Complete Partition Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: S10-5G-Manual-Kernel-Files
+          path: out_images/*
+          
