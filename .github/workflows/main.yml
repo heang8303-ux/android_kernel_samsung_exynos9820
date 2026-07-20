@@ -13,25 +13,19 @@ jobs:
       - name: Setup Build Environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libelf-dev
-
-      - name: Download Reliable AOSP Clang Toolchain
-        run: |
-          mkdir -p $GITHUB_WORKSPACE/tc/clang
-          # Pulling the raw binary archive directly from the Android prebuilts mirror
-          curl -Lo clang.tar.gz https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r0.12/clang-r488909.tar.gz
-          tar -C $GITHUB_WORKSPACE/tc/clang -xzf clang.tar.gz
-          rm clang.tar.gz
+          # Install standard build tools + the required cross-compilers directly from Ubuntu
+          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libelf-dev gcc-aarch64-linux-gnu g++-aarch64-linux-gnu clang lld llvm
 
       - name: Compile Exynos 9820 Kernel Tree
         run: |
-          export PATH="$GITHUB_WORKSPACE/tc/clang/bin:$PATH"
           export ARCH=arm64
           export SUBARCH=arm64
           export HEADER_ARCH=arm64
           
-          # Set compiler arguments matching LineageOS spec
+          # Initialize configuration using target defconfig
           make O=out exynos9820_defconfig
+          
+          # Compile using the runner's native LLVM/Clang toolchain
           make -j$(nproc --all) O=out \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -45,8 +39,6 @@ jobs:
       - name: Package Output Formats
         run: |
           mkdir -p out_images
-          
-          # Copy the raw compiled kernel binary out of the output directory
           if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
             cp out/arch/arm64/boot/Image.gz-dtb out_images/S10_5G_Kernel.img
             echo "Successfully isolated Image.gz-dtb"
@@ -55,7 +47,6 @@ jobs:
             echo "Successfully isolated raw Image"
           fi
           
-          # Separate out the device tree overlay if present
           if [ -f out/arch/arm64/boot/dtbo.img ]; then
             cp out/arch/arm64/boot/dtbo.img out_images/dtbo.img
           fi
@@ -63,11 +54,9 @@ jobs:
       - name: Setup and Build Flashable AnyKernel3 Zip
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git ak3
-          # Configure AnyKernel3 properties for generic arm64 installation
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' ak3/anykernel.sh
           sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=\/dev\/block\/by-name\/boot;/g' ak3/anykernel.sh
           
-          # Move compiled binary into placement position
           if [ -f out_images/S10_5G_Kernel.img ]; then
             cp out_images/S10_5G_Kernel.img ak3/Image.gz-dtb || cp out_images/S10_5G_Kernel.img ak3/Image
           fi
