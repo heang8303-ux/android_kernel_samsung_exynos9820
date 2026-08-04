@@ -47,12 +47,16 @@ jobs:
           rm -rf drivers/kernelsu
           git clone --depth=1 --branch v3.3.0 https://github.com/KernelSU-Next/KernelSU-Next drivers/kernelsu
           
-          # 2. Add KernelSU build entry to drivers/Makefile if not present
+          # 2. Add KernelSU build entry to drivers/Makefile based on directory structure
           if ! grep -q "kernelsu" drivers/Makefile; then
-            echo "obj-y += kernelsu/" >> drivers/Makefile
+            if [ -d "drivers/kernelsu/kernel" ]; then
+              echo "obj-y += kernelsu/kernel/" >> drivers/Makefile
+            else
+              echo "obj-y += kernelsu/" >> drivers/Makefile
+            fi
           fi
           
-          # 3. Add KernelSU menu entry dynamically based on file presence
+          # 3. Add KernelSU menu entry dynamically to drivers/Kconfig
           if ! grep -q "kernelsu" drivers/Kconfig; then
             if [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
               sed -i '/endmenu/i source "drivers/kernelsu/kernel/Kconfig"' drivers/Kconfig
