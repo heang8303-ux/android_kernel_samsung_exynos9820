@@ -1,0 +1,99 @@
+name: Build Samsung Galaxy S10 Series Kernels
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: "beyond0lte"
+            name: "Galaxy S10e"
+            defconfig: "exynos9820-beyond0lte_defconfig"
+          - device: "beyond1lte"
+            name: "Galaxy S10"
+            defconfig: "exynos9820-beyond1lte_defconfig"
+          - device: "beyond2lte"
+            name: "Galaxy S10 Plus"
+            defconfig: "exynos9820-beyond2lte_defconfig"
+          - device: "beyondx"
+            name: "Galaxy S10 5G"
+            defconfig: "exynos9820-beyondx_defconfig"
+
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf \
+            liblz4-tool libncurses5-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync \
+            schedtool squashfs-tools xsltproc zip zlib1g-dev libelf-dev binutils-aarch64-linux-gnu \
+            clang lld llvm
+
+      - name: Compile Kernel (${{ matrix.device }})
+        run: |
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export HEADER_ARCH=arm64
+          
+          rm -rf out
+          mkdir -p out
+          
+          # Initialize target S10 defconfig
+          make O=out ${{ matrix.defconfig }}
+          
+          # Fire off compilation
+          make -j$(nproc --all) O=out \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            LD=ld.lld \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip
+
+      - name: Setup and Build TWRP-Flashable AnyKernel3 Zip
+        run: |
+          rm -rf ak3
+          git clone https://github.com/osm0sis/AnyKernel3.git ak3
+          
+          # Patch AK3 parameters for Exynos partition scheme
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' ak3/anykernel.sh
+          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=\/dev\/block\/by-name\/boot;/g' ak3/anykernel.sh
+          
+          # Copy compiled kernel binaries & DTBs
+          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+            cp out/arch/arm64/boot/Image.gz-dtb ak3/Image.gz-dtb
+          elif [ -f out/arch/arm64/boot/Image.gz ]; then
+            cp out/arch/arm64/boot/Image.gz ak3/Image.gz
+          elif [ -f out/arch/arm64/boot/Image ]; then
+            cp out/arch/arm64/boot/Image ak3/Image
+          fi
+          
+          if [ -f out/arch/arm64/boot/dtbo.img ]; then
+            cp out/arch/arm64/boot/dtbo.img ak3/dtbo.img
+          fi
+
+          # Output filename matching GitHub release assets structure
+          ZIP_NAME="Kernel-${{ matrix.device }}-AK3.zip"
+          
+          mkdir -p release
+          cd ak3
+          zip -r9 "../release/${ZIP_NAME}" * -x .git\* README.md
+          cd ..
+
+      - name: Upload S10 Artifact Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: S10-Kernel-${{ matrix.device }}
+          path: release/*.zip
+          
