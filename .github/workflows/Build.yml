@@ -1,70 +1,162 @@
-name: Build LineageOS S10 5G Manual
+name: Build Multi-Device Kernel
 
 on:
   workflow_dispatch:
+    inputs:
+      ksu:
+        description: "Include KernelSU-Next (manual hooks)"
+        required: true
+        default: "yes"
+        type: choice
+        options:
+          - "yes"
+          - "no"
+      release:
+        description: "Create a GitHub Release with the artifacts"
+        required: true
+        default: "no"
+        type: choice
+        options:
+          - "yes"
+          - "no"
+  push:
+    branches:
+      - lineage-23.2
+    paths:
+      - "build.sh"
+      - "scripts/ksu-integrate.py"
+      - ".github/workflows/build.yml"
+      - "arch/arm64/configs/exynos9820-*"
 
+concurrency:
+  group: build-kernels-${{ github.ref }}
+  cancel-in-progress: true
+permissions: 
+  contents: write
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build for ${{ matrix.device }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: beyondx
+            defconfig: exynos9820-beyondx_defconfig
+
+    env:
+      MODEL: ${{ matrix.device }}
+      DEFCONFIG: ${{ matrix.defconfig }}
+      KSU: ${{ github.event.inputs.ksu || 'yes' }}
+
     steps:
-      - name: Checkout Kernel Source
+      - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
 
-      - name: Setup Build Environment
+      - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf liblz4-tool libncurses5-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libelf-dev binutils-aarch64-linux-gnu clang lld llvm
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git build-essential bc bison flex libssl-dev libelf-dev \
+            zip unzip cpio kmod ccache rsync python3 \
+            curl wget ca-certificates xz-utils file gawk \
+            zlib1g-dev libncurses-dev gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
+            device-tree-compiler
 
-      - name: Compile Exynos 9820 Kernel Tree
-        run: |
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export HEADER_ARCH=arm64
-          
-          # Initializing the exact target config file we found
-          make O=out exynos9820-beyondx_defconfig
-          
-          # Fire off the compilation process
-          make -j$(nproc --all) O=out \
-            CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            LD=ld.lld \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache-${{ matrix.device }}-${{ env.KSU }}
+          max-size: 2G
 
-      - name: Package Output Formats
+      - name: Cache Proton Clang toolchain
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: toolchain/clang
+          key: proton-clang-master-v2
+
+      - name: Download Proton Clang
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
-          mkdir -p out_images
-          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
-            cp out/arch/arm64/boot/Image.gz-dtb out_images/S10_5G_Kernel.img
-            echo "Successfully isolated Image.gz-dtb"
-          elif [ -f out/arch/arm64/boot/Image ]; then
-            cp out/arch/arm64/boot/Image out_images/S10_5G_Kernel.img
-            echo "Successfully isolated raw Image"
+          set -e
+          rm -rf toolchain/clang
+          mkdir -p toolchain
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git toolchain/clang
+
+      - name: Integrate KernelSU-Next
+        if: ${{ env.KSU == 'yes' }}
+        run: |
+          set -e
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/legacy/kernel/setup.sh" | bash -s legacy
+
+      - name: Apply KernelSU-Next manual hooks
+        if: ${{ env.KSU == 'yes' }}
+        run: |
+          set -e
+          chmod +x scripts/ksu-integrate.py
+          python3 scripts/ksu-integrate.py
+          grep -E '^(CONFIG_KSU|CONFIG_KPROBES)' arch/arm64/configs/${{ matrix.defconfig }} || true
+
+      - name: Build kernel
+        run: |
+          chmod +x ./build.sh
+          ./build.sh
+
+      - name: Stage release files
+        id: stage
+        run: |
+          set -e
+          OUT=out/arch/arm64/boot
+          STAGE=release/${{ matrix.device }}
+          mkdir -p "$STAGE"
+
+          # نسخ الـ Zip الخاص بـ AnyKernel3 فقط
+          if ls dist/${{ matrix.device }}/AnyKernel3-*.zip >/dev/null 2>&1; then
+            cp -v dist/${{ matrix.device }}/AnyKernel3-*.zip "$STAGE/"
           fi
           
-          if [ -f out/arch/arm64/boot/dtbo.img ]; then
-            cp out/arch/arm64/boot/dtbo.img out_images/dtbo.img
-          fi
+          # نسخة احتياطية من ملف Image
+          cp -v "$OUT/Image" "$STAGE/Image" || true
 
-      - name: Setup and Build Flashable AnyKernel3 Zip
-        run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git ak3
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' ak3/anykernel.sh
-          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=\/dev\/block\/by-name\/boot;/g' ak3/anykernel.sh
-          
-          if [ -f out_images/S10_5G_Kernel.img ]; then
-            cp out_images/S10_5G_Kernel.img ak3/Image.gz-dtb || cp out_images/S10_5G_Kernel.img ak3/Image
-          fi
-          
-          cd ak3 && zip -r9 ../out_images/AnyKernel3_S10_5G.zip * -x .git\* README.md && cd ..
+          STAMP=$(date -u +%Y%m%d-%H%M)
+          SHA=$(git rev-parse --short HEAD)
+          echo "stamp=${STAMP}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${{ matrix.device }}-kernel-${STAMP}" >> "$GITHUB_OUTPUT"
 
-      - name: Upload Complete Partition Artifacts
+      - name: Upload kernel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: S10-5G-Manual-Kernel-Files
-          path: out_images/*
+          name: ${{ steps.stage.outputs.artifact_name }}
+          path: release/${{ matrix.device }}/*.zip
+          if-no-files-found: error
+
+  create_release:
+    if: ${{ github.event.inputs.release == 'yes' }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: Build-${{ github.run_id }}
+          name: test permissive kernel Release (${{ github.run_id }})
+          body: |
+            Automated build for Exynos 9820 devices.
+            - KernelSU-Next: `${{ github.event.inputs.ksu }}`
+            - Devices: d1, d1x, d2s, d2x, beyond0/1/2/x
+          files: all-artifacts/**/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
