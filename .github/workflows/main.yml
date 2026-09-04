@@ -24,10 +24,10 @@ jobs:
           mkdir -p tools
           cd tools
           
-          # Download AOSP GCC 4.9 Toolchain for ARM64
+          # Clone GCC 4.9 toolchain
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
           
-          # Download mkdtimg tool for packing DTBO
+          # Download mkdtimg
           wget https://raw.githubusercontent.com/ravindu644/android_kernel_beyondx/stock-ramdisk/binaries/mkdtimg -O mkdtimg
           chmod +x mkdtimg
 
@@ -35,46 +35,26 @@ jobs:
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
-          export WORKSPACE=$(pwd)
           
-          export PATH="${WORKSPACE}/tools/gcc64/bin:${WORKSPACE}/tools:${PATH}"
+          # Set absolute paths to toolchains and utilities
+          TOOLCHAIN_BIN="$(pwd)/tools/gcc64/bin"
+          TOOLS_DIR="$(pwd)/tools"
+          
+          export PATH="${TOOLCHAIN_BIN}:${TOOLS_DIR}:${PATH}"
           export CROSS_COMPILE=aarch64-linux-android-
           
-          # Target defconfig for Galaxy S10 5G
-          DEFCONFIG="exynos9820-beyondx_defconfig"
+          # Verify toolchain exists before building
+          which aarch64-linux-android-gcc || (echo "Compiler not found in PATH!" && exit 1)
+          
+          DEFCONFIG="exynos9820-beyondxks_defconfig"
           
           mkdir -p out
-          
-          # Generate kernel configuration
           make O=out $DEFCONFIG
-          
-          # Compile DTBs and DTBOs
           make -j$(nproc --all) O=out dtbs
           
-          # Pack generated DTBOs into dtbo.img
-          DTBO_LIST=$(find out/arch/arm64/boot/dts/ -name "*beyondx*.dtbo" -o -name "*.dtbo")
+          DTBO_LIST=$(find out/arch/arm64/boot/dts/ -name "*.dtbo")
           if [ -n "$DTBO_LIST" ]; then
             mkdtimg create out/dtbo.img $DTBO_LIST
-            echo "Successfully generated dtbo.img for S10 5G"
-          else
-            echo "Warning: No .dtbo files found!"
-          fi
-
-      - name: Collect Output Artifacts
-        run: |
-          mkdir -p output/dtbs
-          
-          # Copy compiled S10 5G DTB files
-          find out/arch/arm64/boot/dts/ -name "*beyondx*.dtb" -exec cp {} output/dtbs/ \;
-          
-          # If no specific beyondx DTB found, copy all compiled dtbs
-          if [ -z "$(ls -A output/dtbs)" ]; then
-            find out/arch/arm64/boot/dts/ -name "*.dtb" -exec cp {} output/dtbs/ \;
-          fi
-          
-          # Copy dtbo.img
-          if [ -f "out/dtbo.img" ]; then
-            cp out/dtbo.img output/
           fi
 
       - name: Upload S10 5G DTB & DTBO Artifacts
