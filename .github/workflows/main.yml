@@ -11,63 +11,49 @@ jobs:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
 
-      - name: Install Build Dependencies
+      - name: Install Build Dependencies & GCC 10 Cross-Compiler
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential libssl-dev libncurses5-dev libncursesw5-dev \
             bison flex libelf-dev liblz4-tool bc ccache zip git wget \
-            python3 device-tree-compiler
+            python3 device-tree-compiler gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
-      - name: Setup Toolchains & Utilities
+      - name: Setup Tools
         run: |
           mkdir -p tools
           cd tools
-
-          # Clone reliable GitHub mirror of AOSP GCC 4.9 ARM64
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git gcc64
-
-          # Download mkdtimg
+          # Download mkdtimg tool
           wget https://raw.githubusercontent.com/ravindu644/android_kernel_beyondx/stock-ramdisk/binaries/mkdtimg -O mkdtimg
           chmod +x mkdtimg
-
-      - name: Verify Compiler
-        run: |
-          # Ensure execution permissions on cloned toolchain binaries
-          chmod -R +x tools/gcc64/bin/
-          
-          # Add toolchain to PATH for verification check
-          export PATH="${GITHUB_WORKSPACE}/tools/gcc64/bin:${PATH}"
-          
-          # Output exact location of compiler to log
-          which aarch64-linux-android-gcc || (echo "GCC binary not found!" && exit 1)
 
       - name: Build DTBs and Pack DTBO
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
           
-          export PATH="${GITHUB_WORKSPACE}/tools/gcc64/bin:${GITHUB_WORKSPACE}/tools:${PATH}"
-          export CROSS_COMPILE=aarch64-linux-android-
+          # Add mkdtimg to PATH
+          export PATH="${GITHUB_WORKSPACE}/tools:${PATH}"
+          
+          # Use system GCC 10+ cross compiler prefix
+          export CROSS_COMPILE=aarch64-linux-gnu-
 
-          # 1. Search for matching defconfig file
+          # 1. Target defconfig for S10 5G (force beyondx or fallback)
           DEFCONFIG_FILE=$(find arch/arm64/configs/ -maxdepth 2 \( -name "*beyondx*" -o -name "*exynos9820*" \) -name "*defconfig*" | head -n 1 | xargs basename)
 
           if [ -z "$DEFCONFIG_FILE" ]; then
-            echo "ERROR: Could not automatically find a valid defconfig!"
-            echo "Listing files inside arch/arm64/configs/:"
-            ls -la arch/arm64/configs/
+            echo "ERROR: Could not find defconfig file!"
             exit 1
           fi
 
-          echo "Found Target Defconfig: $DEFCONFIG_FILE"
+          echo "Using Defconfig: $DEFCONFIG_FILE"
 
           mkdir -p out
 
-          # 2. Generate configuration
+          # 2. Generate kernel config
           make O=out $DEFCONFIG_FILE
 
-          # 3. Build DTBs
+          # 3. Build device tree blobs
           make -j$(nproc --all) O=out dtbs
 
           # 4. Pack DTBO Image
@@ -78,6 +64,7 @@ jobs:
           else
             echo "Warning: No .dtbo files found!"
           fi
+
       - name: Collect Output Artifacts
         run: |
           mkdir -p output/dtbs
@@ -85,7 +72,7 @@ jobs:
           # Collect compiled .dtb files
           find out/arch/arm64/boot/dts/ -name "*.dtb" -exec cp {} output/dtbs/ \;
 
-          # Collect compiled dtbo.img
+          # Collect dtbo.img
           if [ -f "out/dtbo.img" ]; then
             cp out/dtbo.img output/
           fi
