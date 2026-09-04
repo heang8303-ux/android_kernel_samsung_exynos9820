@@ -1,72 +1,85 @@
-name: Build LineageOS S10 5G Manual
+name: Build S10 5G (Exynos 9820) DTB & DTBO
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build-dtb:
+    runs-on: ubuntu-22.04
+
     steps:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
 
-      - name: Setup Build Environment
+      - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          # Removed gcc-multilib, g++-multilib, and full gcc-aarch64 cross compilers to clear conflicts
-          # Added clean standalone aarch64 binutils alongside LLVM toolchain
-          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf liblz4-tool libncurses5-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libelf-dev binutils-aarch64-linux-gnu clang lld llvm
+          sudo apt-get install -y \
+            build-essential libssl-dev libncurses5-dev libncursesw5-dev \
+            bison flex libelf-dev liblz4-tool bc ccache zip git wget \
+            python3 device-tree-compiler
 
-      - name: Compile Exynos 9820 Kernel Tree
+      - name: Setup Toolchain and Utilities
+        run: |
+          mkdir -p tools
+          cd tools
+          
+          # Download AOSP GCC 4.9 Toolchain for ARM64
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
+          
+          # Download mkdtimg tool for packing DTBO
+          wget https://raw.githubusercontent.com/ravindu644/android_kernel_beyondx/stock-ramdisk/binaries/mkdtimg -O mkdtimg
+          chmod +x mkdtimg
+
+      - name: Build DTBs and Pack DTBO
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
-          export HEADER_ARCH=arm64
+          export WORKSPACE=$(pwd)
           
-          # Initialize configuration using target defconfig
-          make O=out exynos9820_defconfig
+          export PATH="${WORKSPACE}/tools/gcc64/bin:${WORKSPACE}/tools:${PATH}"
+          export CROSS_COMPILE=aarch64-linux-android-
           
-          # Force the build system to use pure LLVM tools for compiling, linking, and processing
-          make -j$(nproc --all) O=out \
-            CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            LD=ld.lld \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip
+          # Target defconfig for Galaxy S10 5G
+          DEFCONFIG="exynos9820-beyondx_defconfig"
+          
+          mkdir -p out
+          
+          # Generate kernel configuration
+          make O=out $DEFCONFIG
+          
+          # Compile DTBs and DTBOs
+          make -j$(nproc --all) O=out dtbs
+          
+          # Pack generated DTBOs into dtbo.img
+          DTBO_LIST=$(find out/arch/arm64/boot/dts/ -name "*beyondx*.dtbo" -o -name "*.dtbo")
+          if [ -n "$DTBO_LIST" ]; then
+            mkdtimg create out/dtbo.img $DTBO_LIST
+            echo "Successfully generated dtbo.img for S10 5G"
+          else
+            echo "Warning: No .dtbo files found!"
+          fi
 
-      - name: Package Output Formats
+      - name: Collect Output Artifacts
         run: |
-          mkdir -p out_images
-          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
-            cp out/arch/arm64/boot/Image.gz-dtb out_images/S10_5G_Kernel.img
-            echo "Successfully isolated Image.gz-dtb"
-          elif [ -f out/arch/arm64/boot/Image ]; then
-            cp out/arch/arm64/boot/Image out_images/S10_5G_Kernel.img
-            echo "Successfully isolated raw Image"
+          mkdir -p output/dtbs
+          
+          # Copy compiled S10 5G DTB files
+          find out/arch/arm64/boot/dts/ -name "*beyondx*.dtb" -exec cp {} output/dtbs/ \;
+          
+          # If no specific beyondx DTB found, copy all compiled dtbs
+          if [ -z "$(ls -A output/dtbs)" ]; then
+            find out/arch/arm64/boot/dts/ -name "*.dtb" -exec cp {} output/dtbs/ \;
           fi
           
-          if [ -f out/arch/arm64/boot/dtbo.img ]; then
-            cp out/arch/arm64/boot/dtbo.img out_images/dtbo.img
+          # Copy dtbo.img
+          if [ -f "out/dtbo.img" ]; then
+            cp out/dtbo.img output/
           fi
 
-      - name: Setup and Build Flashable AnyKernel3 Zip
-        run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git ak3
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' ak3/anykernel.sh
-          sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot;/block=\/dev\/block\/by-name\/boot;/g' ak3/anykernel.sh
-          
-          if [ -f out_images/S10_5G_Kernel.img ]; then
-            cp out_images/S10_5G_Kernel.img ak3/Image.gz-dtb || cp out_images/S10_5G_Kernel.img ak3/Image
-          fi
-          
-          cd ak3 && zip -r9 ../out_images/AnyKernel3_S10_5G.zip * -x .git\* README.md && cd ..
-
-      - name: Upload Complete Partition Artifacts
+      - name: Upload S10 5G DTB & DTBO Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: S10-5G-Manual-Kernel-Files
-          path: out_images/*
+          name: S10-5G-DTB-DTBO
+          path: output/*
           
