@@ -19,42 +19,68 @@ jobs:
             bison flex libelf-dev liblz4-tool bc ccache zip git wget \
             python3 device-tree-compiler
 
-      - name: Setup Toolchain and Utilities
+      - name: Setup Toolchains & Utilities
         run: |
           mkdir -p tools
           cd tools
-          
-          # Clone GCC 4.9 toolchain
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
-          
+
+          # Clone reliable GitHub mirror of AOSP GCC 4.9 ARM64
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git gcc64
+
           # Download mkdtimg
           wget https://raw.githubusercontent.com/ravindu644/android_kernel_beyondx/stock-ramdisk/binaries/mkdtimg -O mkdtimg
           chmod +x mkdtimg
+
+      - name: Verify Compiler
+        run: |
+          # Ensure execution permissions on cloned toolchain binaries
+          chmod -R +x tools/gcc64/bin/
+          
+          # Add toolchain to PATH for verification check
+          export PATH="${GITHUB_WORKSPACE}/tools/gcc64/bin:${PATH}"
+          
+          # Output exact location of compiler to log
+          which aarch64-linux-android-gcc || (echo "GCC binary not found!" && exit 1)
 
       - name: Build DTBs and Pack DTBO
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
           
-          # Set absolute paths to toolchains and utilities
-          TOOLCHAIN_BIN="$(pwd)/tools/gcc64/bin"
-          TOOLS_DIR="$(pwd)/tools"
-          
-          export PATH="${TOOLCHAIN_BIN}:${TOOLS_DIR}:${PATH}"
+          # Export absolute paths using GITHUB_WORKSPACE environment variable
+          export PATH="${GITHUB_WORKSPACE}/tools/gcc64/bin:${GITHUB_WORKSPACE}/tools:${PATH}"
           export CROSS_COMPILE=aarch64-linux-android-
-          
-          # Verify toolchain exists before building
-          which aarch64-linux-android-gcc || (echo "Compiler not found in PATH!" && exit 1)
-          
+
+          # Defconfig for S10 5G
           DEFCONFIG="exynos9820-beyondxks_defconfig"
-          
+
           mkdir -p out
+
+          # 1. Generate configuration
           make O=out $DEFCONFIG
+
+          # 2. Build device tree targets
           make -j$(nproc --all) O=out dtbs
-          
+
+          # 3. Pack DTBO
           DTBO_LIST=$(find out/arch/arm64/boot/dts/ -name "*.dtbo")
           if [ -n "$DTBO_LIST" ]; then
             mkdtimg create out/dtbo.img $DTBO_LIST
+            echo "Successfully generated dtbo.img"
+          else
+            echo "Warning: No .dtbo files found!"
+          fi
+
+      - name: Collect Output Artifacts
+        run: |
+          mkdir -p output/dtbs
+
+          # Collect compiled .dtb files
+          find out/arch/arm64/boot/dts/ -name "*.dtb" -exec cp {} output/dtbs/ \;
+
+          # Collect compiled dtbo.img
+          if [ -f "out/dtbo.img" ]; then
+            cp out/dtbo.img output/
           fi
 
       - name: Upload S10 5G DTB & DTBO Artifacts
