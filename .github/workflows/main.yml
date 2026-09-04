@@ -47,22 +47,30 @@ jobs:
           export ARCH=arm64
           export SUBARCH=arm64
           
-          # Export absolute paths using GITHUB_WORKSPACE environment variable
           export PATH="${GITHUB_WORKSPACE}/tools/gcc64/bin:${GITHUB_WORKSPACE}/tools:${PATH}"
           export CROSS_COMPILE=aarch64-linux-android-
 
-          # Defconfig for S10 5G
-          DEFCONFIG="exynos9820-beyondxks_defconfig"
+          # 1. Search for matching defconfig file
+          DEFCONFIG_FILE=$(find arch/arm64/configs/ -maxdepth 2 \( -name "*beyondx*" -o -name "*exynos9820*" \) -name "*defconfig*" | head -n 1 | xargs basename)
+
+          if [ -z "$DEFCONFIG_FILE" ]; then
+            echo "ERROR: Could not automatically find a valid defconfig!"
+            echo "Listing files inside arch/arm64/configs/:"
+            ls -la arch/arm64/configs/
+            exit 1
+          fi
+
+          echo "Found Target Defconfig: $DEFCONFIG_FILE"
 
           mkdir -p out
 
-          # 1. Generate configuration
-          make O=out $DEFCONFIG
+          # 2. Generate configuration
+          make O=out $DEFCONFIG_FILE
 
-          # 2. Build device tree targets
+          # 3. Build DTBs
           make -j$(nproc --all) O=out dtbs
 
-          # 3. Pack DTBO
+          # 4. Pack DTBO Image
           DTBO_LIST=$(find out/arch/arm64/boot/dts/ -name "*.dtbo")
           if [ -n "$DTBO_LIST" ]; then
             mkdtimg create out/dtbo.img $DTBO_LIST
@@ -70,7 +78,6 @@ jobs:
           else
             echo "Warning: No .dtbo files found!"
           fi
-
       - name: Collect Output Artifacts
         run: |
           mkdir -p output/dtbs
