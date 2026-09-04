@@ -32,51 +32,34 @@ jobs:
           export ARCH=arm64
           export SUBARCH=arm64
           
-          # Add mkdtimg to PATH
           export PATH="${GITHUB_WORKSPACE}/tools:${PATH}"
-          
-          # Use system GCC 10+ cross compiler prefix
           export CROSS_COMPILE=aarch64-linux-gnu-
 
-          # 1. Target defconfig for S10 5G (force beyondx or fallback)
+          # 1. Target defconfig for S10 5G
           DEFCONFIG_FILE=$(find arch/arm64/configs/ -maxdepth 2 \( -name "*beyondx*" -o -name "*exynos9820*" \) -name "*defconfig*" | head -n 1 | xargs basename)
-
-          if [ -z "$DEFCONFIG_FILE" ]; then
-            echo "ERROR: Could not find defconfig file!"
-            exit 1
-          fi
-
           echo "Using Defconfig: $DEFCONFIG_FILE"
 
           mkdir -p out
 
-          # 2. Generate kernel config
+          # 2. Build configuration & DTBs
           make O=out $DEFCONFIG_FILE
-
-          # 3. Build device tree blobs
           make -j$(nproc --all) O=out dtbs
 
-          # 4. Pack DTBO Image
-          DTBO_LIST=$(find out/arch/arm64/boot/dts/ -name "*.dtbo")
+          # 3. Filter ONLY S10 5G DTBOs (beyondx) to keep size under ~2-4MB
+          DTBO_LIST=$(find out/arch/arm64/boot/dts/ -name "*beyondx*.dtbo")
+          
+          # Fallback to dts/exynos if no beyondx prefix exists
+          if [ -z "$DTBO_LIST" ]; then
+            DTBO_LIST=$(find out/arch/arm64/boot/dts/exynos/ -name "*.dtbo")
+          fi
+
           if [ -n "$DTBO_LIST" ]; then
             mkdtimg create out/dtbo.img $DTBO_LIST
-            echo "Successfully generated dtbo.img"
+            echo "Successfully packed S10 5G dtbo.img"
           else
-            echo "Warning: No .dtbo files found!"
+            echo "Error: No matching .dtbo files found!" && exit 1
           fi
-
-      - name: Collect Output Artifacts
-        run: |
-          mkdir -p output/dtbs
-
-          # Collect compiled .dtb files
-          find out/arch/arm64/boot/dts/ -name "*.dtb" -exec cp {} output/dtbs/ \;
-
-          # Collect dtbo.img
-          if [ -f "out/dtbo.img" ]; then
-            cp out/dtbo.img output/
-          fi
-
+          
       - name: Upload S10 5G DTB & DTBO Artifacts
         uses: actions/upload-artifact@v4
         with:
